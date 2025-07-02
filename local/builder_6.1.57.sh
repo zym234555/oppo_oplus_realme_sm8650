@@ -13,8 +13,16 @@ MANIFEST=${MANIFEST:-oppo+oplus+realme}
 read -p "请输入自定义内核后缀（默认：android14-11-o-gca13bffobf09）: " CUSTOM_SUFFIX
 CUSTOM_SUFFIX=${CUSTOM_SUFFIX:-android14-11-o-gca13bffobf09}
 USE_PATCH_LINUX=${USE_PATCH_LINUX:-y}
+read -p "是否应用 kprobes钩子？(y/n，默认：n): " APPLY_KPROBES
+APPLY_LZ4KD=${APPLY_KPROBES:-n}
+read -p "是否应用 lz4 1.10.0 & zstd 1.5.7 补丁？(y/n，默认：y): " APPLY_LZ4
+APPLY_LZ4=${APPLY_LZ4:-y}
 read -p "是否应用 lz4kd 补丁？(y/n，默认：y): " APPLY_LZ4KD
 APPLY_LZ4KD=${APPLY_LZ4KD:-y}
+read -p "是否添加 BBR 等一系列拥塞控制算法？(y添加/n禁用/d默认，默认：n): " APPLY_BBR
+APPLY_BBR=${APPLY_BBR:-n}
+read -p "是否启用三星SSG IO调度器？(y/n，默认：y): " APPLY_SSG
+APPLY_SSG=${APPLY_SSG:-y}
 read -p "是否安装风驰内核驱动（未完成）？(y/n，默认：n): " APPLY_SCX
 APPLY_SCX=${APPLY_SCX:-n}
 echo
@@ -23,7 +31,11 @@ echo "SoC 分支: $SOC_BRANCH"
 echo "适用机型: $MANIFEST"
 echo "自定义内核后缀: -$CUSTOM_SUFFIX"
 echo "使用 patch_linux: $USE_PATCH_LINUX"
+echo "使用 kprobes钩子: $APPLY_KPROBES"
+echo "应用 lz4&zstd 补丁: $APPLY_LZ4"
 echo "应用 lz4kd 补丁: $APPLY_LZ4KD"
+echo "应用 BBR 等算法: $APPLY_BBR"
+echo "启用三星SSG IO调度器: $APPLY_SSG"
 echo "应用风驰内核驱动: $APPLY_SCX"
 echo "===================="
 echo
@@ -87,11 +99,27 @@ cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
 cd ./common
 patch -p1 < 50_add_susfs_in_gki-android14-6.1.patch || true
 cp ../SukiSU_patch/69_hide_stuff.patch ./
-patch -p1 -F 3 < 69_hide_stuff.patch
-patch -p1 < syscall_hooks.patch
+patch -p1 -F 3 < 69_hide_stuff.patch || true
+patch -p1 < syscall_hooks.patch || true
 cd ../
 
-# ===== 选择应用 LZ4KD 补丁 =====
+# ===== 应用 LZ4 & ZSTD 补丁 =====
+if [[ "$APPLY_LZ4" == "y" || "$APPLY_LZ4" == "Y" ]]; then
+  echo ">>> 正在添加lz4 1.10.0 & zstd 1.5.7补丁..."
+  git clone https://github.com/cctv18/oppo_oplus_realme_sm8650.git
+  cp ./oppo_oplus_realme_sm8650/zram_patch/001-lz4.patch ./common/
+  cp ./oppo_oplus_realme_sm8650/zram_patch/lz4armv8.S ./common/lib
+  cp ./oppo_oplus_realme_sm8650/zram_patch/002-zstd.patch ./common/
+  cd "$WORKDIR/kernel_workspace/common"
+  git apply -p1 < 001-lz4.patch || true
+  patch -p1 < 002-zstd.patch || true
+  cd "$WORKDIR/kernel_workspace"
+else
+  echo ">>> 跳过 LZ4&ZSTD 补丁..."
+  cd "$WORKDIR/kernel_workspace"
+fi
+
+# ===== 应用 LZ4KD 补丁 =====
 if [[ "$APPLY_LZ4KD" == "y" || "$APPLY_LZ4KD" == "Y" ]]; then
   echo ">>> 应用 LZ4KD 补丁..."
   cp -r ./SukiSU_patch/other/zram/lz4k/include/linux/* ./common/include/linux/
@@ -102,7 +130,7 @@ if [[ "$APPLY_LZ4KD" == "y" || "$APPLY_LZ4KD" == "Y" ]]; then
   patch -p1 -F 3 < lz4kd.patch || true
   cd "$WORKDIR/kernel_workspace"
 else
-  echo ">>> 跳过 LZ4KD 补丁应用"
+  echo ">>> 跳过 LZ4KD 补丁..."
   cd "$WORKDIR/kernel_workspace"
 fi
 
@@ -113,8 +141,6 @@ DEFCONFIG_FILE=./common/arch/arm64/configs/gki_defconfig
 # 写入通用 SUSFS/KSU 配置
 cat >> "$DEFCONFIG_FILE" <<EOF
 CONFIG_KSU=y
-CONFIG_KSU_SUSFS_SUS_SU=n
-CONFIG_KSU_MANUAL_HOOK=y
 CONFIG_KSU_SUSFS=y
 CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
 CONFIG_KSU_SUSFS_SUS_PATH=y
@@ -122,7 +148,7 @@ CONFIG_KSU_SUSFS_SUS_MOUNT=y
 CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
 CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
 CONFIG_KSU_SUSFS_SUS_KSTAT=y
-CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
+#CONFIG_KSU_SUSFS_SUS_OVERLAYFS is not set
 CONFIG_KSU_SUSFS_TRY_UMOUNT=y
 CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
 CONFIG_KSU_SUSFS_SPOOF_UNAME=y
@@ -131,6 +157,15 @@ CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
 CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
 CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
 EOF
+
+if [[ "$APPLY_KPROBES" == "y" || "$APPLY_KPROBES" == "Y" ]]; then
+  echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> "$DEFCONFIG_FILE"
+  echo "CONFIG_KSU_MANUAL_HOOK=n" >> "$DEFCONFIG_FILE"
+  echo "CONFIG_KSU_KPROBES_HOOK=y" >> "$DEFCONFIG_FILE"
+else
+  echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$DEFCONFIG_FILE"
+  echo "CONFIG_KSU_SUSFS_SUS_SU=n" >>  "$DEFCONFIG_FILE"
+fi
 
 # 仅在启用了 KPM 时添加 KPM 支持
 if [[ "$USE_PATCH_LINUX" == "y" || "$USE_PATCH_LINUX" == "Y" ]]; then
@@ -147,6 +182,31 @@ CONFIG_CRYPTO_LZ4KD=y
 CONFIG_CRYPTO_842=y
 EOF
 
+fi
+
+# ===== 添加 BBR 等一系列拥塞控制算法 =====
+if [[ "$APPLY_BBR" == "y" || "$APPLY_BBR" == "Y" || "$APPLY_BBR" == "d" || "$APPLY_BBR" == "D" ]]; then
+  echo ">>> 正在添加 BBR 等一系列拥塞控制算法..."
+  echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$DEFCONFIG_FILE"
+  echo "CONFIG_TCP_CONG_BBR=y" >> "$DEFCONFIG_FILE"
+  echo "CONFIG_TCP_CONG_CUBIC=y" >> "$DEFCONFIG_FILE"
+  echo "CONFIG_TCP_CONG_VEGAS=y" >> "$DEFCONFIG_FILE"
+  echo "CONFIG_TCP_CONG_NV=y" >> "$DEFCONFIG_FILE"
+  echo "CONFIG_TCP_CONG_WESTWOOD=y" >> "$DEFCONFIG_FILE"
+  echo "CONFIG_TCP_CONG_HTCP=y" >> "$DEFCONFIG_FILE"
+  echo "CONFIG_TCP_CONG_BRUTAL=y" >> "$DEFCONFIG_FILE"
+  if [[ "$APPLY_BBR" == "d" || "$APPLY_BBR" == "D" ]]; then
+    echo "CONFIG_DEFAULT_TCP_CONG=bbr" >> "$DEFCONFIG_FILE"
+  else
+    echo "CONFIG_DEFAULT_TCP_CONG=cubic" >> "$DEFCONFIG_FILE"
+  fi
+fi
+
+# ===== 启用三星SSG IO调度器 =====
+if [[ "$APPLY_SSG" == "y" || "$APPLY_SSG" == "Y" ]]; then
+  echo ">>> 正在启用三星SSG IO调度器..."
+  echo "CONFIG_MQ_IOSCHED_SSG=y" >> "$DEFCONFIG_FILE"
+  echo "CONFIG_MQ_IOSCHED_SSG_CGROUP=y" >> "$DEFCONFIG_FILE"
 fi
 
 # ===== 禁用 defconfig 检查 =====
@@ -202,9 +262,7 @@ cd "$WORKDIR/kernel_workspace/AnyKernel3"
 
 # ===== 如果启用 lz4kd，则下载 zram.zip 并放入当前目录 =====
 if [[ "$APPLY_LZ4KD" == "y" || "$APPLY_LZ4KD" == "Y" ]]; then
-  echo ">>> 检测到启用了 lz4kd，准备下载 zram.zip..."
   wget https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8650/refs/heads/main/zram.zip
-  echo ">>> 已下载 zram.zip 并放入打包目录"
 fi
 
 # ===== 生成 ZIP 文件名 =====
