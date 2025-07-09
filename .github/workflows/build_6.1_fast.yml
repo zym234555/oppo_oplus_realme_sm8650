@@ -111,28 +111,66 @@ jobs:
           echo "当前磁盘空间："
           df -h
           echo "当前构建内核版本：${{ github.event.inputs.little_version }}"
-
-      - name: 缓存APT包列表
-        uses: actions/cache@v3
-        with:
-          path: /var/lib/apt/lists
-          key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/build_6.1_fast.yml') }}
-          restore-keys: |
-            ${{ runner.os }}-apt-
-
-      - name: 安装配置环境依赖
+          
+      - name: 配置LLVM源并安装GPG秘钥
         run: |
-          if [ ! -d "/var/lib/apt/lists" ] || [ -z "$(ls -A /var/lib/apt/lists)" ]; then
-            echo "正在更新APT包列表..."
-            sudo apt-mark hold firefox
-            sudo apt update && sudo apt upgrade -y
+          export LLVM_VERSION=20
+          export CODENAME=$(lsb_release -cs)
+          export BASE_URL="http://apt.llvm.org"
+          if ! grep -q "apt.llvm.org" /etc/apt/sources.list.d/*.list; then
+            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+            echo "deb $BASE_URL/$CODENAME/ llvm-toolchain-$CODENAME-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+            echo "已添加LLVM源!"
           else
-            echo "正在使用缓存的APT列表..."
+            echo "LLVM源已存在，跳过添加..."
           fi
-          sudo apt install python3 git curl ccache build-essential flex bison libssl-dev libelf-dev libncurses-dev liblz4-tool zlib1g-dev libxml2-utils rsync zip unzip binutils dwarves python-is-python3 -y --no-install-recommends
-          #测试ccache能否正常运行
-          ccache --version
       
+      - name: 缓存APT包
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        id: apt-cache
+        with:
+          packages: |
+            curl
+            bison
+            flex
+            make
+            binutils
+            dwarves
+            git
+            lld
+            pahole
+            zip
+            perl
+            gcc
+            python3
+            python-is-python3
+            bc
+            libssl-dev
+            libelf-dev
+            clang-20
+            lldb-20
+            lld-20
+            clangd-20
+            clang-tidy-20
+            clang-format-20
+            clang-tools-20
+            llvm-20-dev
+            llvm-20-tools
+            libomp-20-dev
+            libc++-20-dev
+            libc++abi-20-dev
+            libclang-common-20-dev
+            libclang-20-dev
+            libclang-cpp20-dev
+            liblldb-20-dev
+            libunwind-20-dev
+            libclang-rt-20-dev
+            libpolly-20-dev
+          install-options: --no-install-recommends
+          cache-key: apt-${{ runner.os }}-${{ hashFiles('.github/workflows/build_6.1_fast.yml') }}
+          update: true
+          version: 1.0
+
       - name: 载入当前版本内核的 ccache缓存
         uses: actions/cache@v3
         with:
@@ -142,7 +180,7 @@ jobs:
             ccache-${{ runner.os }}-${{ github.event.inputs.little_version }}-
             ccache-${{ runner.os }}-
       
-      - name: 初始化Ccache（若第一次运行脚本）
+      - name: 初始化Ccache
         run: |
           export CCACHE_COMPILERCHECK="%compiler% -dumpmachine; %compiler% -dumpversion"
           export CCACHE_NOHASHDIR="true"
@@ -161,19 +199,16 @@ jobs:
               echo "ccache 已初始化，跳过初始化..."
             fi
           else
-            echo "未安装 ccache，跳过初始化..."
+            echo "错误：ccache 未安装！"
+            exit 1
           fi
       
-      - name: 初始化源码仓库及编译链
+      - name: 初始化源码仓库
         run: |
-          rm -rf kernel_platform
-          wget https://github.com/cctv18/oppo_oplus_realme_sm8650/raw/refs/heads/dev/repo
-          chmod 777 ./repo
-          sudo mv ./repo /usr/local/bin/repo
-          repo init -u https://github.com/cctv18/oppo_oplus_realme_sm8650.git -b refs/heads/dev -m op_sm8650_${{ github.event.inputs.little_version }}.xml --depth=1
-          repo --trace sync -c -j$(nproc --all) --no-tags --no-clone-bundle --force-sync
+          rm -rf kernel_platform && mkdir kernel_platform && cd kernel_platform
+          echo "正在克隆源码仓库..."
+          git clone --depth=1 https://github.com/cctv18/android_kernel_common_oneplus_sm8650 -b oneplus/sm8650_v_15.0.0_oneplus12 common
           echo "正在去除 ABI 保护 & 去除 dirty 后缀..."
-          cd kernel_platform
           rm common/android/abi_gki_protected_exports_* || true
           for f in common/scripts/setlocalversion; do
             sed -i 's/ -dirty//g' "$f"
@@ -330,7 +365,7 @@ jobs:
             #sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' ./common/arch/arm64/configs/gki_defconfig
             #sed -i 's/CONFIG_MODULE_SIG=y/CONFIG_MODULE_SIG=n/g' ./common/arch/arm64/configs/gki_defconfig
           fi
-          # 添加O2编译优化配置
+          # 开启O2编译优化配置
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
           #禁用 defconfig 检查
           sed -i 's/check_defconfig//' ./common/build.config.gki
@@ -432,8 +467,6 @@ jobs:
       - name: 构建内核
         run: |
           export PATH="/usr/lib/ccache:$PATH"
-          export PATH="$GITHUB_WORKSPACE/kernel_platform/prebuilts/clang/host/linux-x86/clang-r487747c/bin:$PATH"
-          
           export CCACHE_COMPILERCHECK="%compiler% -dumpmachine; %compiler% -dumpversion"
           export CCACHE_NOHASHDIR="true"
           export CCACHE_HARDLINK="true"
@@ -447,7 +480,7 @@ jobs:
             rm -rf ./sched_ext/README.md
             cp -r ./sched_ext/* ./common/kernel/sched
           fi
-          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole LD=ld.lld HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error gki_defconfig all
+          make -j$(nproc --all) LLVM=-20 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnuabeihf- CC=clang LD=ld.lld HOSTCC=clang HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error gki_defconfig all
           echo "内核编译完成！"
          
       - name: 应用patch_linux并修补内核
