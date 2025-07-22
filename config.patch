@@ -1,8 +1,8 @@
 diff --git a/kernel/configs.c b/kernel/configs.c
-index a1b2c3d..8d9f7a4 100644
+index a28c79c..1f9c84c 100644
 --- a/kernel/configs.c
 +++ b/kernel/configs.c
-@@ -9,6 +9,8 @@
+@@ -15,6 +15,8 @@
  #include <linux/seq_file.h>
  #include <linux/init.h>
  #include <linux/uaccess.h>
@@ -11,7 +11,7 @@ index a1b2c3d..8d9f7a4 100644
  
  /*
   * "IKCFG_ST" and "IKCFG_ED" are used to extract the config data from
-@@ -27,18 +29,67 @@ asm (
+@@ -34,17 +36,65 @@ asm (
  
  #ifdef CONFIG_IKCONFIG_PROC
  
@@ -83,16 +83,17 @@ index a1b2c3d..8d9f7a4 100644
  }
  
  static const struct proc_ops config_gz_proc_ops = {
-@@ -51,13 +102,21 @@ static int __init ikconfig_init(void)
+@@ -55,6 +105,9 @@ static const struct proc_ops config_gz_proc_ops = {
+ static int __init ikconfig_init(void)
  {
  	struct proc_dir_entry *entry;
- 
++ 
 +	// 修改配置数据
 +	modify_config_data();
-+
+ 
  	/* create the current config file */
  	entry = proc_create("config.gz", S_IFREG | S_IRUGO, NULL,
- 			    &config_gz_proc_ops);
+@@ -62,7 +115,12 @@ static int __init ikconfig_init(void)
  	if (!entry)
  		return -ENOMEM;
  
@@ -106,7 +107,7 @@ index a1b2c3d..8d9f7a4 100644
  
  	return 0;
  }
-@@ -65,6 +124,9 @@ static int __init ikconfig_init(void)
+@@ -70,6 +128,9 @@ static int __init ikconfig_init(void)
  static void __exit ikconfig_cleanup(void)
  {
  	remove_proc_entry("config.gz", NULL);
