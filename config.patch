@@ -1,0 +1,118 @@
+diff --git a/kernel/configs.c b/kernel/configs.c
+index a1b2c3d..8d9f7a4 100644
+--- a/kernel/configs.c
++++ b/kernel/configs.c
+@@ -9,6 +9,8 @@
+ #include <linux/seq_file.h>
+ #include <linux/init.h>
+ #include <linux/uaccess.h>
++#include <linux/slab.h>
++#include <linux/string.h>
+ 
+ /*
+  * "IKCFG_ST" and "IKCFG_ED" are used to extract the config data from
+@@ -27,18 +29,67 @@ asm (
+ 
+ #ifdef CONFIG_IKCONFIG_PROC
+ 
+-extern char kernel_config_data;
+-extern char kernel_config_data_end;
++extern char kernel_config_data[];
++extern char kernel_config_data_end[];
++
++static char *modified_config_data = NULL;
++static size_t modified_config_size = 0;
++
++static void __init modify_config_data(void)
++{
++	const char *target_str = "CONFIG_IP6_NF_NAT=y";
++	const char *replacement_str = "CONFIG_IP6_NF_NAT=n";
++	const size_t target_len = strlen(target_str);
++	const size_t replacement_len = strlen(replacement_str);
++	
++	char *orig_data = kernel_config_data;
++	size_t orig_size = kernel_config_data_end - kernel_config_data;
++	
++	// 查找目标配置项
++	char *pos = strnstr(orig_data, target_str, orig_size);
++	if (!pos) {
++		pr_warn("IKCONFIG: CONFIG_IP6_NF_NAT=y not found in config data\n");
++		return;
++	}
++	
++	// 计算新缓冲区大小
++	modified_config_size = orig_size + (replacement_len - target_len);
++	modified_config_data = kmalloc(modified_config_size, GFP_KERNEL);
++	if (!modified_config_data) {
++		pr_err("IKCONFIG: Failed to allocate memory for modified config\n");
++		return;
++	}
++	
++	// 构建修改后的配置数据
++	size_t prefix_len = pos - orig_data;
++	size_t suffix_len = orig_size - prefix_len - target_len;
++	
++	// 复制前半部分
++	memcpy(modified_config_data, orig_data, prefix_len);
++	
++	// 插入修改后的配置项
++	memcpy(modified_config_data + prefix_len, replacement_str, replacement_len);
++	
++	// 复制后半部分
++	memcpy(modified_config_data + prefix_len + replacement_len, 
++	       pos + target_len, 
++	       suffix_len);
++	
++	pr_info("IKCONFIG: Successfully modified CONFIG_IP6_NF_NAT display value\n");
++}
+ 
+ static ssize_t
+ ikconfig_read_current(struct file *file, char __user *buf,
+ 		      size_t len, loff_t * offset)
+ {
+-	return simple_read_from_buffer(buf, len, offset,
+-				       &kernel_config_data,
+-				       &kernel_config_data_end -
+-				       &kernel_config_data);
++	const char *src_data = modified_config_data ? : kernel_config_data;
++	const size_t src_size = modified_config_data ? 
++		modified_config_size : 
++		(kernel_config_data_end - kernel_config_data);
++	
++	return simple_read_from_buffer(buf, len, offset, src_data, src_size);
+ }
+ 
+ static const struct proc_ops config_gz_proc_ops = {
+@@ -51,13 +102,21 @@ static int __init ikconfig_init(void)
+ {
+ 	struct proc_dir_entry *entry;
+ 
++	// 修改配置数据
++	modify_config_data();
++
+ 	/* create the current config file */
+ 	entry = proc_create("config.gz", S_IFREG | S_IRUGO, NULL,
+ 			    &config_gz_proc_ops);
+ 	if (!entry)
+ 		return -ENOMEM;
+ 
+-	proc_set_size(entry, &kernel_config_data_end - &kernel_config_data);
++	proc_set_size(entry, modified_config_data ? 
++		modified_config_size : 
++		(kernel_config_data_end - kernel_config_data));
++
++	pr_info("IKCONFIG: Initialized, config size: %zu\n",
++		modified_config_size ? modified_config_size : (kernel_config_data_end - kernel_config_data));
+ 
+ 	return 0;
+ }
+@@ -65,6 +124,9 @@ static int __init ikconfig_init(void)
+ static void __exit ikconfig_cleanup(void)
+ {
+ 	remove_proc_entry("config.gz", NULL);
++	
++	if (modified_config_data)
++		kfree(modified_config_data);
+ }
+ 
+ module_init(ikconfig_init);
