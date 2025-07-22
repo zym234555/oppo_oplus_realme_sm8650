@@ -1,5 +1,5 @@
 diff --git a/kernel/configs.c b/kernel/configs.c
-index a28c79c..1f9c84c 100644
+index a28c79c..d5f21c6 100644
 --- a/kernel/configs.c
 +++ b/kernel/configs.c
 @@ -15,6 +15,8 @@
@@ -11,7 +11,7 @@ index a28c79c..1f9c84c 100644
  
  /*
   * "IKCFG_ST" and "IKCFG_ED" are used to extract the config data from
-@@ -34,17 +36,65 @@ asm (
+@@ -34,17 +36,73 @@ asm (
  
  #ifdef CONFIG_IKCONFIG_PROC
  
@@ -32,9 +32,17 @@ index a28c79c..1f9c84c 100644
 +	
 +	char *orig_data = kernel_config_data;
 +	size_t orig_size = kernel_config_data_end - kernel_config_data;
-+	
++	char *pos;
++	size_t prefix_len;
++	size_t suffix_len;
++
++	// 如果已经修改过，则直接返回
++	if (modified_config_data) {
++		return;
++	}
++
 +	// 查找目标配置项
-+	char *pos = strnstr(orig_data, target_str, orig_size);
++	pos = memmem(orig_data, orig_size, target_str, target_len);
 +	if (!pos) {
 +		pr_warn("IKCONFIG: CONFIG_IP6_NF_NAT=y not found in config data\n");
 +		return;
@@ -49,8 +57,8 @@ index a28c79c..1f9c84c 100644
 +	}
 +	
 +	// 构建修改后的配置数据
-+	size_t prefix_len = pos - orig_data;
-+	size_t suffix_len = orig_size - prefix_len - target_len;
++	prefix_len = pos - orig_data;
++	suffix_len = orig_size - prefix_len - target_len;
 +	
 +	// 复制前半部分
 +	memcpy(modified_config_data, orig_data, prefix_len);
@@ -83,17 +91,18 @@ index a28c79c..1f9c84c 100644
  }
  
  static const struct proc_ops config_gz_proc_ops = {
-@@ -55,6 +105,9 @@ static const struct proc_ops config_gz_proc_ops = {
+@@ -55,6 +113,10 @@ static const struct proc_ops config_gz_proc_ops = {
  static int __init ikconfig_init(void)
  {
  	struct proc_dir_entry *entry;
 + 
 +	// 修改配置数据
 +	modify_config_data();
++
  
  	/* create the current config file */
  	entry = proc_create("config.gz", S_IFREG | S_IRUGO, NULL,
-@@ -62,7 +115,12 @@ static int __init ikconfig_init(void)
+@@ -62,7 +124,12 @@ static int __init ikconfig_init(void)
  	if (!entry)
  		return -ENOMEM;
  
@@ -107,7 +116,7 @@ index a28c79c..1f9c84c 100644
  
  	return 0;
  }
-@@ -70,6 +128,9 @@ static int __init ikconfig_init(void)
+@@ -70,6 +137,9 @@ static int __init ikconfig_init(void)
  static void __exit ikconfig_cleanup(void)
  {
  	remove_proc_entry("config.gz", NULL);
