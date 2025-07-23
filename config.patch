@@ -1,147 +1,32 @@
-diff --git a/kernel/configs.c b/kernel/configs.c
-index a28c79c..a5cf9ad 100644
---- a/kernel/configs.c
-+++ b/kernel/configs.c
-@@ -15,6 +15,8 @@
- #include <linux/seq_file.h>
- #include <linux/init.h>
- #include <linux/uaccess.h>
-+#include <linux/slab.h>
-+#include <linux/string.h>
+diff --git a/kernel/Makefile b/kernel/Makefile
+index df02908..f654c9b 100644
+--- a/kernel/Makefile
++++ b/kernel/Makefile
+@@ -154,8 +154,27 @@ $(obj)/config_data.gz: $(obj)/config_data FORCE
  
- /*
-  * "IKCFG_ST" and "IKCFG_ED" are used to extract the config data from
-@@ -34,17 +36,93 @@ asm (
+ filechk_cat = cat $<
  
- #ifdef CONFIG_IKCONFIG_PROC
- 
--extern char kernel_config_data;
--extern char kernel_config_data_end;
-+extern char kernel_config_data[];
-+extern char kernel_config_data_end[];
++define config_fix
++	echo "kernel: Checking config_data for CONFIG_IP6_NF_NAT..."; \
++	if grep -q '^CONFIG_IP6_NF_NAT=y' $@; then \
++		echo "kernel: Found CONFIG_IP6_NF_NAT=y - modifying to display as 'n'"; \
++		sed -i 's/^CONFIG_IP6_NF_NAT=y$$/CONFIG_IP6_NF_NAT=n/' $@; \
++		echo "kernel: Successfully modified CONFIG_IP6_NF_NAT display in config_data"; \
++	elif grep -q '^CONFIG_IP6_NF_NAT=n' $@; then \
++		echo "kernel: CONFIG_IP6_NF_NAT already set to 'n' (no change needed)"; \
++	elif grep -q 'CONFIG_IP6_NF_NAT' $@; then \
++		echo "kernel: Warning: Unexpected CONFIG_IP6_NF_NAT value found"; \
++		grep 'CONFIG_IP6_NF_NAT' $@; \
++	else \
++		echo "kernel: Warning: CONFIG_IP6_NF_NAT not found in config_data"; \
++	fi; \
++	echo "kernel: Final CONFIG_IP6_NF_NAT value in config_data: "; \
++	grep 'CONFIG_IP6_NF_NAT' $@ || echo "kernel: (not present)"
++endef
 +
-+static char *modified_config_data = NULL;
-+static size_t modified_config_size = 0;
-+
-+/* 自定义内存搜索函数 */
-+static void *custom_memmem(const void *haystack, size_t haystack_len,
-+                           const void *needle, size_t needle_len)
-+{
-+    const char *h = haystack;
-+    const char *n = needle;
-+    size_t i, j;
-+
-+    if (needle_len == 0)
-+        return (void *)haystack;
-+
-+    if (haystack_len < needle_len)
-+        return NULL;
-+
-+    for (i = 0; i <= haystack_len - needle_len; i++) {
-+        for (j = 0; j < needle_len; j++) {
-+            if (h[i + j] != n[j])
-+                break;
-+        }
-+        if (j == needle_len)
-+            return (void *)(h + i);
-+    }
-+    return NULL;
-+}
-+
-+static void __init modify_config_data(void)
-+{
-+    const char *target_str = "CONFIG_IP6_NF_NAT=y";
-+    const char *replacement_str = "CONFIG_IP6_NF_NAT=n";
-+    const size_t target_len = strlen(target_str);
-+    const size_t replacement_len = strlen(replacement_str);
-+    
-+    char *orig_data = kernel_config_data;
-+    size_t orig_size = kernel_config_data_end - kernel_config_data;
-+    char *pos;
-+    size_t prefix_len;
-+    size_t suffix_len;
-+
-+    // 查找目标配置项
-+    pos = custom_memmem(orig_data, orig_size, target_str, target_len);
-+    if (!pos) {
-+        pr_warn("IKCONFIG: CONFIG_IP6_NF_NAT=y not found in config data\n");
-+        return;
-+    }
-+    
-+    // 计算新缓冲区大小
-+    modified_config_size = orig_size + (replacement_len - target_len);
-+    modified_config_data = kmalloc(modified_config_size, GFP_KERNEL);
-+    if (!modified_config_data) {
-+        pr_err("IKCONFIG: Failed to allocate memory for modified config\n");
-+        return;
-+    }
-+    
-+    // 构建修改后的配置数据
-+    prefix_len = pos - orig_data;
-+    suffix_len = orig_size - prefix_len - target_len;
-+    
-+    // 复制前半部分
-+    memcpy(modified_config_data, orig_data, prefix_len);
-+    
-+    // 插入修改后的配置项
-+    memcpy(modified_config_data + prefix_len, replacement_str, replacement_len);
-+    
-+    // 复制后半部分
-+    memcpy(modified_config_data + prefix_len + replacement_len, 
-+           pos + target_len, 
-+           suffix_len);
-+    
-+    pr_info("IKCONFIG: Successfully modified CONFIG_IP6_NF_NAT display value\n");
-+}
+ $(obj)/config_data: $(KCONFIG_CONFIG) FORCE
+ 	$(call filechk,cat)
++	$(Q)$(config_fix)
  
- static ssize_t
- ikconfig_read_current(struct file *file, char __user *buf,
- 		      size_t len, loff_t * offset)
- {
--	return simple_read_from_buffer(buf, len, offset,
--				       &kernel_config_data,
--				       &kernel_config_data_end -
--				       &kernel_config_data);
-+	const char *src_data = modified_config_data ? : kernel_config_data;
-+	const size_t src_size = modified_config_data ? 
-+		modified_config_size : 
-+		(kernel_config_data_end - kernel_config_data);
-+	
-+	return simple_read_from_buffer(buf, len, offset, src_data, src_size);
- }
+ $(obj)/kheaders.o: $(obj)/kheaders_data.tar.xz
  
- static const struct proc_ops config_gz_proc_ops = {
-@@ -55,6 +133,9 @@ static const struct proc_ops config_gz_proc_ops = {
- static int __init ikconfig_init(void)
- {
- 	struct proc_dir_entry *entry;
-+ 
-+	// 修改配置数据
-+	modify_config_data();
- 
- 	/* create the current config file */
- 	entry = proc_create("config.gz", S_IFREG | S_IRUGO, NULL,
-@@ -62,7 +143,12 @@ static int __init ikconfig_init(void)
- 	if (!entry)
- 		return -ENOMEM;
- 
--	proc_set_size(entry, &kernel_config_data_end - &kernel_config_data);
-+	proc_set_size(entry, modified_config_data ? 
-+		modified_config_size : 
-+		(kernel_config_data_end - kernel_config_data));
-+
-+	pr_info("IKCONFIG: Initialized, config size: %zu\n",
-+		modified_config_size ? modified_config_size : (kernel_config_data_end - kernel_config_data));
- 
- 	return 0;
- }
-@@ -70,6 +156,9 @@ static int __init ikconfig_init(void)
- static void __exit ikconfig_cleanup(void)
- {
- 	remove_proc_entry("config.gz", NULL);
-+	
-+	if (modified_config_data)
-+		kfree(modified_config_data);
- }
- 
- module_init(ikconfig_init);
