@@ -1,4 +1,7 @@
 # 欧加真 SM8650 通用内核自动化编译脚本
+![STAR](https://img.shields.io/github/stars/cctv18/oppo_oplus_realme_sm8650?style=flat&logo=github)
+![FORK](https://img.shields.io/github/forks/cctv18/oppo_oplus_realme_sm8650?style=flat&logo=greasyfork&color=%2394E61A)
+![COOLAPK](https://img.shields.io/website?url=http%3A%2F%2Fwww.coolapk.com%2Fu%2F22650293&down_message=cctv18_2&logo=githubsponsors&logoColor=FF4500&label=%E9%85%B7%E5%AE%89&color=FF4500)
 ##### 
 一个更方便、快捷的自动化OPPO/一加/真我系列骁龙8Gen3(SM8650)机型的通用内核编译脚本。
 ##### 
@@ -19,7 +22,9 @@
 ##### 
 - [x] 欧加真 SM8650 通用A15 OKI内核（基于一加12 6.1.75/6.1.118 A15官方内核源码，适用于ColorOS 15/RealmeUI 6.0）
 ##### 
-- [x] 引入ccache缓存，优化工具链及编译流程，二次编译时间可缩短至约6min (注：首次使用ccache由于需要创建缓存速度会比较慢(约20min)，从第二次开始ccache才会生效加速编译，加速后单次编译时间约6min)
+- [x] 引入ccache缓存，优化工具链及编译流程，二次编译时间可缩短至约6min (注：首次使用ccache由于需要创建缓存速度会比较慢(约20min)，从第二次开始ccache才会生效加速编译，加速后单次编译时间约6~11min，具体时间随服务器负载情况而浮动)
+##### 
+- [x] 引入O2编译优化，改善内核运行性能 (注意，若在更新O2编译优化之前编译过内核并创建了ccache缓存，请先清理旧的缓存再重新编译，否则会导致ccache加速无法生效)
 ##### 
 - [x] 可选manual/kprobes钩子模式：kprobes钩子模式下支持切换至sus su模式（类似面具的su实现，用于兼容一些程序的运行）
 ##### 
